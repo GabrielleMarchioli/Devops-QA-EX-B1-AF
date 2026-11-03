@@ -8,8 +8,6 @@
 - Gabrielle Amaro Marchioli
 - Giulianno Giacianni Gonçalves
 
-Registro arquitetural cumulativo do B1 (mesmo conteúdo de `docs/arquitetura/README.md`). Cada desafio segue o mesmo padrão:
-
 `RF → RNF (FURPS+) → ASR + RPC → Alternativas/trade-offs → ADR → C4 → Evidência`
 
 > Regra de ouro: o C4 é explicado pelo ADR, o ADR é sustentado pelos ASRs e RPCs, os ASRs derivam de RF/RNF e a evidência mostra que o raciocínio é plausível.
