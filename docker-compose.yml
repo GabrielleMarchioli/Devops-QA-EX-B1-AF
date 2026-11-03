@@ -44,6 +44,15 @@ services:
       - postgres
       - rabbitmq
 
+  # Frontend VueJS (nginx servindo o build e repassando /api para o Core)
+  frontend:
+    build: ./frontend
+    container_name: educacao-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - app
+
   # Desafio 3: servico Python de IA (recomendacao + RAG)
   ia-service:
     build: ./servicos/ia-service
