@@ -1059,3 +1059,92 @@ docker run -d --name jenkins-b1 -u root -p 8081:8080 -v jenkins_b1_home:/var/jen
 | ADR-006 Pipelines + observabilidade | **Sim** | Job multibranch com deploy em homologação; shared library para os pipelines Python |
 
 Fluxo da PoC: dispositivo conclui atividade (MQTT) → gateway → Core registra conclusão e moedas → ranking atualizado → evento no RabbitMQ → notificação → recomendação da IA na tela (e fallback ao derrubar o ia-service) → tudo visível no Grafana.
+
+---
+
+# AF: Plataforma Inteligente de Educação Corporativa
+
+**Cenário (Estudo de Caso 1, Prova AF):** empresa de educação corporativa quer avaliar competências, recomendar cursos e acompanhar evolução de colaboradores, com classificação por ML, recomendação por RAG e agentes de IA.
+
+## 1. RF/RNF do caso
+
+| ID | Requisito | Status |
+|---|---|---|
+| RF01 | Cadastro e consulta de colaboradores e cursos | Reaproveitado do AC2 (`aluno`) |
+| RF02 | Classificar nível de competência via ML | **Novo:** `ml-service` |
+| RF03 | Recomendar cursos via RAG em documentos institucionais | **Novo:** `rag-service` |
+| RF04 | Agentes de IA coordenando orientação, com autorização | **Novo:** `agente-service` |
+| RF05 | Acompanhar status de solicitações de treinamento | **Novo:** endpoint em `ml-service` |
+| RNF01 | 95% das consultas em até 2s sob 300 usuários | Reaproveita padrão de timeout do ADR-003 (1,5s) |
+| RNF02 | Aceitar solicitações mesmo com ML indisponível | Reaproveitado: outbox + RabbitMQ (ADR-004) |
+| RNF03 | Proteger dados e controlar acesso dos agentes | **Novo:** autorização obrigatória no `agente-service` |
+| RNF04 | Evolução independente dos componentes de IA | Reaproveitado: `ia-service` separado (ADR-003) |
+| RNF05 | Custo compatível com equipe reduzida | Reaproveitado: monólito modular (ADR-001) |
+
+## 2. ASRs
+
+| ASR | Como influencia a arquitetura |
+|---|---|
+| RNF04 (evolução independente da IA) | **Implantação:** ml-service, rag-service e agente-service são containers e pipelines próprios, deploy sem tocar no Core |
+| RNF02 (aceitar solicitação com ML fora) | **Comunicação:** fila (RabbitMQ/outbox) entre Core e ml-service em vez de chamada síncrona bloqueante |
+| RNF03 (controlar acesso dos agentes) | **Segurança:** agente-service exige `autorizado: true` antes de orquestrar qualquer chamada a outros serviços |
+
+## 3. ADR: Monólito modular híbrido com serviços de IA independentes
+
+- **Contexto:** equipe reduzida (RNF05); cadastro e acompanhamento são estáveis; ML, RAG e agentes evoluem rápido e usam stack Python, separada do Core Java.
+- **Decisão:** manter o Core de negócio como monólito modular em Spring Boot (reaproveitando a estrutura do AC2) e isolar IA em três serviços Python (FastAPI): `ml-service` (classificação), `rag-service` (recomendação) e `agente-service` (orquestração com autorização).
+- **Justificativa:** evita a complexidade operacional de microsserviços completos (RNF05), mas garante evolução e deploy independentes da IA (RNF04).
+- **Consequência/trade-off:** o Core continua sendo o ponto de entrada único para as funcionalidades de negócio; os serviços de IA dependem de disponibilidade de rede entre si, mitigado pelo mesmo padrão de timeout e fallback usado no ADR-003.
+
+## 4. C4 Container
+
+```mermaid
+flowchart LR
+    colab(["👤 Colaborador"])
+    spa["Frontend<br/>[VueJS]"]
+    core["Core<br/>[Spring Boot, monólito modular]<br/>cadastro · acompanhamento"]
+    db[("PostgreSQL")]
+    mq[["RabbitMQ"]]
+    subgraph ia["Fronteira de IA (deploy e escala próprios)"]
+        ml["ml-service<br/>[FastAPI]<br/>classificação de competência<br/>+ status de treinamento"]
+        rag["rag-service<br/>[FastAPI]<br/>RAG sobre documentos institucionais"]
+        agente["agente-service<br/>[FastAPI]<br/>orquestra ml + rag<br/>exige autorização"]
+    end
+    colab --> spa -->|REST/JSON| core
+    core -->|JPA| db
+    core -->|AMQP, assíncrono| mq
+    core -->|REST, síncrono| agente
+    agente -->|REST| ml
+    agente -->|REST| rag
+    classDef p fill:#08427b,color:#fff
+    classDef c fill:#1168bd,color:#fff
+    classDef d fill:#438dd5,color:#fff
+    class colab p
+    class spa,core,ml,rag,agente c
+    class db,mq d
+```
+
+## 5. Comunicação: REST vs RabbitMQ
+
+| Interação | Protocolo | Justificativa |
+|---|---|---|
+| Colaborador consulta recomendação/orientação | REST (síncrono) | Usuário espera resposta na tela |
+| Core aciona agente-service | REST (síncrono) | Resposta imediata necessária para RF04 |
+| Solicitação de treinamento de modelo | RabbitMQ/outbox (assíncrono) | RNF02 exige continuar aceitando mesmo com ML fora; não bloqueia o usuário |
+| Notificação de conclusão de treinamento | RabbitMQ (assíncrono) | Desacoplado, reaproveita exchange `gamificacao.eventos` do ADR-004 |
+
+## 6. Evidências
+
+![Classificação de competência](docs/arquitetura/evidencias/af/rf02-classificacao.png)
+
+![Recomendação via RAG](docs/arquitetura/evidencias/af/rf03-rag-recomendacao.png)
+
+![Agente sem autorização (403)](docs/arquitetura/evidencias/af/rf04-agente-sem-autorizacao.png)
+
+![Agente autorizado (200)](docs/arquitetura/evidencias/af/rf04-agente-autorizado.png)
+
+![Agente integrado (ml + rag)](docs/arquitetura/evidencias/af/rf04-agente-integrado.png)
+
+![Solicitar treinamento](docs/arquitetura/evidencias/af/rf05-solicitar-treinamento.png)
+
+![Status do treinamento](docs/arquitetura/evidencias/af/rf05-status-treinamento.png)
